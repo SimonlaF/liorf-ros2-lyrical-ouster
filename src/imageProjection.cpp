@@ -1,4 +1,5 @@
 #include "utility.h"
+#include <pcl/common/point_tests.h>
 #include "liorf/msg/cloud_info.hpp"
 // <!-- liorf_localization_yjz_lucky_boy -->
 struct VelodynePointXYZIRT
@@ -576,12 +577,25 @@ public:
         for (int i = 0; i < cloudSize; ++i)
         {
             PointType thisPoint;
+
             thisPoint.x = laserCloudIn->points[i].x;
             thisPoint.y = laserCloudIn->points[i].y;
             thisPoint.z = laserCloudIn->points[i].z;
             thisPoint.intensity = laserCloudIn->points[i].intensity;
 
+            // Ignore points containing NaN or Inf coordinates
+            if (!pcl::isFinite(thisPoint))
+            {
+                continue;
+            }
+
             float range = common_lib_->pointDistance(thisPoint);
+
+            // Extra protection against invalid ranges
+            if (!std::isfinite(range))
+            {
+                continue;
+            }
             if (range < lidarMinRange || range > lidarMaxRange)
                 continue;
 
@@ -595,7 +609,15 @@ public:
             if (i % point_filter_num != 0)
                 continue;
 
-            thisPoint = deskewPoint(&thisPoint, laserCloudIn->points[i].time);
+            thisPoint = deskewPoint(
+                &thisPoint,
+                laserCloudIn->points[i].time
+            );
+
+            if (!pcl::isFinite(thisPoint))
+            {
+                continue;
+            }
 
             fullCloud->push_back(thisPoint);
         }

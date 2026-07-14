@@ -33,12 +33,13 @@
 
 #include <opencv2/opencv.hpp>
 // #include <opencv/cv.h>
-
-#include <tf2/LinearMath/Quaternion.h>
+// .hpp for Lyrical
+#include <tf2/LinearMath/Quaternion.hpp>
 #include <tf2_ros/transform_listener.h>
 #include <tf2_ros/transform_broadcaster.h>
-#include <tf2_eigen/tf2_eigen.h>
-#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
+// .hpp for Lyrical
+#include <tf2_eigen/tf2_eigen.hpp>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
  
 #include <vector>
 #include <cmath>

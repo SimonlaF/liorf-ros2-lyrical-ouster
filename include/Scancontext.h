@@ -15,7 +15,8 @@
 #include <opencv2/opencv.hpp>
 #include <opencv2/core/eigen.hpp>
 #include <opencv2/highgui/highgui.hpp>
-#include <cv_bridge/cv_bridge.h>
+// .hpp for lyrical
+#include <cv_bridge/cv_bridge.hpp>
 
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>

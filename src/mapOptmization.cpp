@@ -15,7 +15,8 @@
 #include <gtsam/nonlinear/Marginals.h>
 #include <gtsam/nonlinear/Values.h>
 #include <gtsam/inference/Symbol.h>
-
+#include <algorithm>
+#include <pcl/common/point_tests.h>
 #include <gtsam/nonlinear/ISAM2.h>
 
 #include <GeographicLib/Geocentric.hpp>
@@ -244,7 +245,36 @@ public:
         // extract info and feature cloud
         cloudInfo = *msgIn;
         pcl::fromROSMsg(msgIn->cloud_deskewed, *laserCloudSurfLast);
+        // MODIFICATION to remove NaN points from the deskewed cloud
+        auto &points = laserCloudSurfLast->points;
 
+        points.erase(
+            std::remove_if(
+                points.begin(),
+                points.end(),
+                [](const PointType &point)
+                {
+                    return !pcl::isFinite(point);
+                }
+            ),
+            points.end()
+        );
+
+        laserCloudSurfLast->width =
+            static_cast<std::uint32_t>(points.size());
+
+        laserCloudSurfLast->height = 1;
+        laserCloudSurfLast->is_dense = true;
+
+        if (laserCloudSurfLast->empty())
+        {
+            RCLCPP_WARN(
+                get_logger(),
+                "The deskewed cloud contains no valid finite points."
+            );
+            return;
+        }
+        // END OF THE MODIFICATION
         // TODO
         // ......
         // remapping
@@ -368,19 +398,6 @@ public:
         return thisPose6D;
     }
 
-    
-
-
-
-
-
-
-
-
-
-
-
-
 
     bool saveMapService(const std::shared_ptr<liorf::srv::SaveMap::Request> req,
                                 std::shared_ptr<liorf::srv::SaveMap::Response> res)
@@ -475,11 +492,39 @@ public:
         std::vector<int> pointSearchIndGlobalMap;
         std::vector<float> pointSearchSqDisGlobalMap;
         // search near key frames to visualize
+        //modification to remove the nan points in the cloudKeyPoses3D
         mtx.lock();
+
+        if (
+            cloudKeyPoses3D->empty() ||
+            !pcl::isFinite(cloudKeyPoses3D->back())
+        )
+        {
+            mtx.unlock();
+
+            RCLCPP_WARN(
+                get_logger(),
+                "Cannot publish global map: invalid last key pose."
+            );
+
+            return;
+        }
+
         kdtreeGlobalMap->setInputCloud(cloudKeyPoses3D);
-        kdtreeGlobalMap->radiusSearch(cloudKeyPoses3D->back(), globalMapVisualizationSearchRadius, pointSearchIndGlobalMap, pointSearchSqDisGlobalMap, 0);
+
+        const int radiusResult = kdtreeGlobalMap->radiusSearch(
+            cloudKeyPoses3D->back(),
+            globalMapVisualizationSearchRadius,
+            pointSearchIndGlobalMap,
+            pointSearchSqDisGlobalMap,
+            0
+        );
+
         mtx.unlock();
 
+        if (radiusResult <= 0)
+            return;
+        //end of the modification
         for (int i = 0; i < (int)pointSearchIndGlobalMap.size(); ++i)
             globalMapKeyPoses->push_back(cloudKeyPoses3D->points[pointSearchIndGlobalMap[i]]);
         // downsample near selected key frames
@@ -487,12 +532,39 @@ public:
         downSizeFilterGlobalMapKeyPoses.setLeafSize(globalMapVisualizationPoseDensity, globalMapVisualizationPoseDensity, globalMapVisualizationPoseDensity); // for global map visualization
         downSizeFilterGlobalMapKeyPoses.setInputCloud(globalMapKeyPoses);
         downSizeFilterGlobalMapKeyPoses.filter(*globalMapKeyPosesDS);
-        for(auto& pt : globalMapKeyPosesDS->points)
+        //modification to remove the nan points in the globalMapKeyPosesDS
+        for (auto &pt : globalMapKeyPosesDS->points)
         {
-            kdtreeGlobalMap->nearestKSearch(pt, 1, pointSearchIndGlobalMap, pointSearchSqDisGlobalMap);
-            pt.intensity = cloudKeyPoses3D->points[pointSearchIndGlobalMap[0]].intensity;
-        }
+            if (!pcl::isFinite(pt))
+                continue;
 
+            pointSearchIndGlobalMap.clear();
+            pointSearchSqDisGlobalMap.clear();
+
+            const int found = kdtreeGlobalMap->nearestKSearch(
+                pt,
+                1,
+                pointSearchIndGlobalMap,
+                pointSearchSqDisGlobalMap
+            );
+
+            if (found < 1 || pointSearchIndGlobalMap.empty())
+                continue;
+
+            const int closestIndex = pointSearchIndGlobalMap[0];
+
+            if (
+                closestIndex < 0 ||
+                closestIndex >= static_cast<int>(cloudKeyPoses3D->size())
+            )
+            {
+                continue;
+            }
+
+            pt.intensity =
+                cloudKeyPoses3D->points[closestIndex].intensity;
+        }
+        //end of modification
         // extract visualized and downsampled key frames
         for (int i = 0; i < (int)globalMapKeyPosesDS->size(); ++i){
             if (common_lib_->pointDistance(globalMapKeyPosesDS->points[i], cloudKeyPoses3D->back()) > globalMapVisualizationSearchRadius)
@@ -507,15 +579,6 @@ public:
         downSizeFilterGlobalMapKeyFrames.filter(*globalMapKeyFramesDS);
         publishCloud(pubLaserCloudSurround, globalMapKeyFramesDS, timeLaserInfoStamp, odometryFrame);
     }
-
-
-
-
-
-
-
-
-
 
 
 
@@ -548,6 +611,7 @@ public:
 
     void performRSLoopClosure()
     {
+        // Modification to remove the nan points in the cloudKeyPoses3D
         if (cloudKeyPoses3D->points.empty() == true)
             return;
 
@@ -555,7 +619,7 @@ public:
         *copy_cloudKeyPoses3D = *cloudKeyPoses3D;
         *copy_cloudKeyPoses6D = *cloudKeyPoses6D;
         mtx.unlock();
-
+        // end of the modification
         // find keys
         int loopKeyCur;
         int loopKeyPre;
@@ -630,6 +694,7 @@ public:
     // copy from sc-lio-sam
     void performSCLoopClosure()
     {
+        // Modification to remove the nan points in the cloudKeyPoses3D
         if (cloudKeyPoses3D->points.empty() == true)
             return;
 
@@ -637,7 +702,7 @@ public:
         *copy_cloudKeyPoses3D = *cloudKeyPoses3D;
         *copy_cloudKeyPoses6D = *cloudKeyPoses6D;
         mtx.unlock();
-
+        // End of the modification
         // find keys
         // first: nn index, second: yaw diff 
         auto detectResult = scManager.detectLoopClosureID(); 
@@ -978,40 +1043,163 @@ public:
 
         extractCloud(cloudToExtract);
     }
-
-    void extractNearby()
+// Modification of extractNearby to remove Nan points from cloudKeyPoses3D and surroundingKeyPosesDS
+ void extractNearby()
     {
-        pcl::PointCloud<PointType>::Ptr surroundingKeyPoses(new pcl::PointCloud<PointType>());
-        pcl::PointCloud<PointType>::Ptr surroundingKeyPosesDS(new pcl::PointCloud<PointType>());
+        if (cloudKeyPoses3D->empty())
+            return;
+
+        // The query point used by radiusSearch must be finite
+        if (!pcl::isFinite(cloudKeyPoses3D->back()))
+        {
+            RCLCPP_ERROR(
+                get_logger(),
+                "Invalid NaN/Inf last key pose before radiusSearch in extractNearby()."
+            );
+            return;
+        }
+
+        pcl::PointCloud<PointType>::Ptr surroundingKeyPoses(
+            new pcl::PointCloud<PointType>()
+        );
+
+        pcl::PointCloud<PointType>::Ptr surroundingKeyPosesDS(
+            new pcl::PointCloud<PointType>()
+        );
+
         std::vector<int> pointSearchInd;
         std::vector<float> pointSearchSqDis;
 
-        // extract all the nearby key poses and downsample them
-        kdtreeSurroundingKeyPoses->setInputCloud(cloudKeyPoses3D); // create kd-tree
-        kdtreeSurroundingKeyPoses->radiusSearch(cloudKeyPoses3D->back(), (double)surroundingKeyframeSearchRadius, pointSearchInd, pointSearchSqDis);
-        for (int i = 0; i < (int)pointSearchInd.size(); ++i)
+        // The KD-tree input cloud must not contain NaN/Inf points
+        auto &keyPosePoints = cloudKeyPoses3D->points;
+
+        const auto invalidKeyPose = std::find_if(
+            keyPosePoints.begin(),
+            keyPosePoints.end(),
+            [](const PointType &point)
+            {
+                return !pcl::isFinite(point);
+            }
+        );
+
+        if (invalidKeyPose != keyPosePoints.end())
         {
-            int id = pointSearchInd[i];
-            surroundingKeyPoses->push_back(cloudKeyPoses3D->points[id]);
+            RCLCPP_ERROR(
+                get_logger(),
+                "cloudKeyPoses3D contains a NaN/Inf key pose."
+            );
+            return;
         }
 
+        // Extract nearby key poses
+        kdtreeSurroundingKeyPoses->setInputCloud(cloudKeyPoses3D);
+
+        const int radiusResult =
+            kdtreeSurroundingKeyPoses->radiusSearch(
+                cloudKeyPoses3D->back(),
+                static_cast<double>(surroundingKeyframeSearchRadius),
+                pointSearchInd,
+                pointSearchSqDis
+            );
+
+        if (radiusResult <= 0)
+            return;
+
+        for (const int id : pointSearchInd)
+        {
+            if (id < 0 || id >= static_cast<int>(cloudKeyPoses3D->size()))
+                continue;
+
+            const PointType &pose = cloudKeyPoses3D->points[id];
+
+            if (!pcl::isFinite(pose))
+                continue;
+
+            surroundingKeyPoses->push_back(pose);
+        }
+
+        if (surroundingKeyPoses->empty())
+            return;
+
+        // Downsample nearby key poses
         downSizeFilterSurroundingKeyPoses.setInputCloud(surroundingKeyPoses);
         downSizeFilterSurroundingKeyPoses.filter(*surroundingKeyPosesDS);
-        for(auto& pt : surroundingKeyPosesDS->points)
+
+        // Remove any NaN/Inf produced or preserved after downsampling
+        auto &downsampledPoints = surroundingKeyPosesDS->points;
+
+        downsampledPoints.erase(
+            std::remove_if(
+                downsampledPoints.begin(),
+                downsampledPoints.end(),
+                [](const PointType &point)
+                {
+                    return !pcl::isFinite(point);
+                }
+            ),
+            downsampledPoints.end()
+        );
+
+        surroundingKeyPosesDS->width =
+            static_cast<std::uint32_t>(downsampledPoints.size());
+        surroundingKeyPosesDS->height = 1;
+        surroundingKeyPosesDS->is_dense = true;
+
+        for (auto &pt : surroundingKeyPosesDS->points)
         {
-            kdtreeSurroundingKeyPoses->nearestKSearch(pt, 1, pointSearchInd, pointSearchSqDis);
-            pt.intensity = cloudKeyPoses3D->points[pointSearchInd[0]].intensity;
+            if (!pcl::isFinite(pt))
+                continue;
+
+            pointSearchInd.clear();
+            pointSearchSqDis.clear();
+
+            const int found =
+                kdtreeSurroundingKeyPoses->nearestKSearch(
+                    pt,
+                    1,
+                    pointSearchInd,
+                    pointSearchSqDis
+                );
+
+            if (found < 1 || pointSearchInd.empty())
+                continue;
+
+            const int closestIndex = pointSearchInd[0];
+
+            if (
+                closestIndex < 0 ||
+                closestIndex >= static_cast<int>(cloudKeyPoses3D->size())
+            )
+            {
+                continue;
+            }
+
+            pt.intensity =
+                cloudKeyPoses3D->points[closestIndex].intensity;
         }
 
-        // also extract some latest key frames in case the robot rotates in one position
-        int numPoses = cloudKeyPoses3D->size();
-        for (int i = numPoses-1; i >= 0; --i)
+        // Add recent key frames if the robot rotates without translating
+        const int numPoses = cloudKeyPoses3D->size();
+
+        for (int i = numPoses - 1; i >= 0; --i)
         {
+            if (!pcl::isFinite(cloudKeyPoses3D->points[i]))
+                continue;
+
             if (timeLaserInfoCur - cloudKeyPoses6D->points[i].time < 10.0)
-                surroundingKeyPosesDS->push_back(cloudKeyPoses3D->points[i]);
+            {
+                surroundingKeyPosesDS->push_back(
+                    cloudKeyPoses3D->points[i]
+                );
+            }
             else
+            {
                 break;
+            }
         }
+
+        if (surroundingKeyPosesDS->empty())
+            return;
 
         extractCloud(surroundingKeyPosesDS);
     }
@@ -1088,11 +1276,33 @@ public:
             PointType pointOri, pointSel, coeff;
             std::vector<int> pointSearchInd;
             std::vector<float> pointSearchSqDis;
-
+            //Modification
             pointOri = laserCloudSurfLastDS->points[i];
-            pointAssociateToMap(&pointOri, &pointSel); 
-            kdtreeSurfFromMap->nearestKSearch(pointSel, 5, pointSearchInd, pointSearchSqDis);
 
+            if (!pcl::isFinite(pointOri))
+            {
+                continue;
+            }
+
+            pointAssociateToMap(&pointOri, &pointSel);
+
+            if (!pcl::isFinite(pointSel))
+            {
+                continue;
+            }
+
+            const int neighbors = kdtreeSurfFromMap->nearestKSearch(
+                pointSel,
+                5,
+                pointSearchInd,
+                pointSearchSqDis
+            );
+
+            if (neighbors < 5)
+            {
+                continue;
+            }
+            //End of the modification
             Eigen::Matrix<float, 5, 3> matA0;
             Eigen::Matrix<float, 5, 1> matB0;
             Eigen::Vector3f matX0;
@@ -1114,10 +1324,23 @@ public:
                 float pb = matX0(1, 0);
                 float pc = matX0(2, 0);
                 float pd = 1;
+                //modification
+                const float ps = std::sqrt(
+                    pa * pa +
+                    pb * pb +
+                    pc * pc
+                );
 
-                float ps = sqrt(pa * pa + pb * pb + pc * pc);
-                pa /= ps; pb /= ps; pc /= ps; pd /= ps;
+                if (!std::isfinite(ps) || ps < 1e-6f)
+                {
+                    continue;
+                }
 
+                pa /= ps;
+                pb /= ps;
+                pc /= ps;
+                pd /= ps;
+                //end of modification
                 bool planeValid = true;
                 for (int j = 0; j < 5; j++) {
                     if (fabs(pa * laserCloudSurfFromMapDS->points[pointSearchInd[j]].x +
@@ -1131,8 +1354,52 @@ public:
                 if (planeValid) {
                     float pd2 = pa * pointSel.x + pb * pointSel.y + pc * pointSel.z + pd;
 
-                    float s = 1 - 0.9 * fabs(pd2) / sqrt(sqrt(pointOri.x * pointOri.x
-                            + pointOri.y * pointOri.y + pointOri.z * pointOri.z));
+                    const float squaredRange =
+                        pointOri.x * pointOri.x +
+                        pointOri.y * pointOri.y +
+                        pointOri.z * pointOri.z;
+
+                    if (!std::isfinite(squaredRange) || squaredRange < 1e-8f)
+                    {
+                        continue;
+                    }
+
+                    const float denominator =
+                        std::sqrt(std::sqrt(squaredRange));
+
+                    if (!std::isfinite(denominator) || denominator < 1e-6f)
+                    {
+                        continue;
+                    }
+
+                    const float s =
+                        1.0f -
+                        0.9f * std::fabs(pd2) / denominator;
+
+                    if (!std::isfinite(s))
+                    {
+                        continue;
+                    }
+
+                    coeff.x = s * pa;
+                    coeff.y = s * pb;
+                    coeff.z = s * pc;
+                    coeff.intensity = s * pd2;
+
+                    if (
+                        !pcl::isFinite(coeff) ||
+                        !std::isfinite(coeff.intensity)
+                    )
+                    {
+                        continue;
+                    }
+
+                    if (s > 0.1f)
+                    {
+                        laserCloudOriSurfVec[i] = pointOri;
+                        coeffSelSurfVec[i] = coeff;
+                        laserCloudOriSurfFlag[i] = true;
+                    }
 
                     coeff.x = s * pa;
                     coeff.y = s * pb;
@@ -1245,7 +1512,18 @@ public:
         matAtA = matAt * matA;
         matAtB = matAt * matB;
         cv::solve(matAtA, matAtB, matX, cv::DECOMP_QR);
+        //modification to remove NaN/Inf values from matX
+        if (!cv::checkRange(matX))
+        {
+            RCLCPP_WARN(
+                get_logger(),
+                "LM optimization produced NaN/Inf values. "
+                "The current iteration is rejected."
+            );
 
+            return true;
+        }
+        //end modification
         if (iterCount == 0) {
 
             cv::Mat matE(1, 6, CV_32F, cv::Scalar::all(0));
@@ -1299,13 +1577,65 @@ public:
         return false; // keep optimizing
     }
 
-    void scan2MapOptimization()
+    void scan2MapOptimization(){
+    for (int i = 0; i < 6; ++i)
     {
+        if (!std::isfinite(transformTobeMapped[i]))
+        {
+            RCLCPP_ERROR(
+                get_logger(),
+                "transformTobeMapped[%d] contains NaN/Inf.",
+                i
+            );
+
+            return;
+        }
+    }
+    // Modification to remove NaN/Inf points from cloudKeyPoses3D and surroundingKeyPosesDS
         if (cloudKeyPoses3D->points.empty())
             return;
 
         if (laserCloudSurfLastDSNum > 30)
         {
+            if (laserCloudSurfFromMapDS->size() < 5)
+        {
+            RCLCPP_WARN(
+                get_logger(),
+                "Not enough valid map points for KD-tree search."
+            );
+
+            return;
+        }
+
+        auto &mapPoints = laserCloudSurfFromMapDS->points;
+
+        mapPoints.erase(
+            std::remove_if(
+                mapPoints.begin(),
+                mapPoints.end(),
+                [](const PointType &point)
+                {
+                    return !pcl::isFinite(point);
+                }
+            ),
+            mapPoints.end()
+        );
+
+        laserCloudSurfFromMapDS->width =
+            static_cast<std::uint32_t>(mapPoints.size());
+        laserCloudSurfFromMapDS->height = 1;
+        laserCloudSurfFromMapDS->is_dense = true;
+        laserCloudSurfFromMapDSNum = mapPoints.size();
+
+        if (laserCloudSurfFromMapDSNum < 5)
+        {
+            RCLCPP_WARN(
+                get_logger(),
+                "Map cloud contains fewer than 5 finite points."
+            );
+
+            return;
+        }
             kdtreeSurfFromMap->setInputCloud(laserCloudSurfFromMapDS);
 
             for (int iterCount = 0; iterCount < 30; iterCount++)
@@ -1394,11 +1724,11 @@ public:
     {
         if (cloudKeyPoses3D->points.empty())
         {
-            noiseModel::Diagonal::shared_ptr priorNoise = noiseModel::Diagonal::Variances((Vector(6) << 1e-2, 1e-2, M_PI*M_PI, 1e8, 1e8, 1e8).finished()); // rad*rad, meter*meter
+            noiseModel::Diagonal::shared_ptr priorNoise = noiseModel::Diagonal::Variances((gtsam::Vector(6) << 1e-2, 1e-2, M_PI*M_PI, 1e8, 1e8, 1e8).finished()); // rad*rad, meter*meter
             gtSAMgraph.add(PriorFactor<Pose3>(0, trans2gtsamPose(transformTobeMapped), priorNoise));
             initialEstimate.insert(0, trans2gtsamPose(transformTobeMapped));
         }else{
-            noiseModel::Diagonal::shared_ptr odometryNoise = noiseModel::Diagonal::Variances((Vector(6) << 1e-6, 1e-6, 1e-6, 1e-4, 1e-4, 1e-4).finished());
+            noiseModel::Diagonal::shared_ptr odometryNoise = noiseModel::Diagonal::Variances((gtsam::Vector(6) << 1e-6, 1e-6, 1e-6, 1e-4, 1e-4, 1e-4).finished());
             gtsam::Pose3 poseFrom = pclPointTogtsamPose3(cloudKeyPoses6D->points.back());
             gtsam::Pose3 poseTo   = trans2gtsamPose(transformTobeMapped);
             gtSAMgraph.add(BetweenFactor<Pose3>(cloudKeyPoses3D->size()-1, cloudKeyPoses3D->size(), poseFrom.between(poseTo), odometryNoise));
@@ -1549,7 +1879,30 @@ public:
         latestEstimate = isamCurrentEstimate.at<Pose3>(isamCurrentEstimate.size()-1);
         // cout << "****************************************************" << endl;
         // isamCurrentEstimate.print("Current estimate: ");
+        const double poseX = latestEstimate.translation().x();
+        const double poseY = latestEstimate.translation().y();
+        const double poseZ = latestEstimate.translation().z();
 
+        const double poseRoll  = latestEstimate.rotation().roll();
+        const double posePitch = latestEstimate.rotation().pitch();
+        const double poseYaw   = latestEstimate.rotation().yaw();
+
+        if (
+            !std::isfinite(poseX) ||
+            !std::isfinite(poseY) ||
+            !std::isfinite(poseZ) ||
+            !std::isfinite(poseRoll) ||
+            !std::isfinite(posePitch) ||
+            !std::isfinite(poseYaw)
+        )
+        {
+            RCLCPP_ERROR(
+                get_logger(),
+                "GTSAM generated an invalid NaN/Inf pose. Keyframe rejected."
+            );
+
+            return;
+        }
         thisPose3D.x = latestEstimate.translation().x();
         thisPose3D.y = latestEstimate.translation().y();
         thisPose3D.z = latestEstimate.translation().z();
