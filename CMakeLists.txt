@@ -106,7 +106,7 @@ target_include_directories(
   ${OpenCV_INCLUDE_DIRS}
   ${EIGEN3_LOCAL_INCLUDE_DIR}
 )
-// Modified for Lyrical with the deprecation of ament_target_dependencies
+# Modified for Lyrical with the deprecation of ament_target_dependencies
 target_link_libraries(
   ${PROJECT_NAME}_imageProjection
   PRIVATE
