@@ -17,7 +17,7 @@ The original copyright notices and license are preserved.
 - Added NaN and Inf protections before PCL KD-tree searches.
 
 ## Tested With : 
-Ubuntu version:
+Ubuntu version: 26.04
 ROS 2 distribution: Lyrical
 LiDAR: Ouster OS1-64
 LiDAR mode: 1024 × 64
