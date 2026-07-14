@@ -1,3 +1,36 @@
+## Credits
+
+This repository is a modified fork of
+[YJZLuckyBoy/liorf](https://github.com/YJZLuckyBoy/liorf),
+which itself is based on LIO-SAM.
+
+The original copyright notices and license are preserved.
+
+## Main modifications
+
+- Build configuration to ROS 2 Lyrical.
+- Replaced deprecated or unavailable CMake dependency handling.
+- Added compatibility with recent PCL, Eigen, GTSAM, OpenCV and tf2 headers.
+- Added Ouster OS1-64 point cloud support.
+- Configured support for the Ouster integrated 6-axis IMU.
+- Updated the static transform publisher launch syntax.
+- Added NaN and Inf protections before PCL KD-tree searches.
+
+## Tested With : 
+Ubuntu version:
+ROS 2 distribution: Lyrical
+LiDAR: Ouster OS1-64
+LiDAR mode: 1024 × 64
+IMU: integrated Ouster 6-axis IMU
+Point cloud topic: /ouster/points
+IMU topic: /ouster/imu
+Point cloud frame: os_sensor
+Bag format: rosbag2
+
+## To run it : 
+ros2 launch liorf run_lio_sam_ouster.launch.py
+
+---------------------------------------------------------------
 # New Feature
 ------------------- Update Date: 2022-11-20 -------------------
 - This version has removed the feature extraction module, making it easier to adapt to different lidars;
