@@ -27,7 +27,7 @@ IMU topic: /ouster/imu
 Point cloud frame: os_sensor
 Bag format: rosbag2
 
-## To run it : 
+## To run it (with ouster) : 
 ros2 launch liorf run_lio_sam_ouster.launch.py
 
 ---------------------------------------------------------------
